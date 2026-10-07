@@ -9,6 +9,7 @@ from langchain_ollama import ChatOllama
 
 from app.ml.alert_router import AlertRouter
 from app.ml.anomaly_detector import AnomalyDetector
+from app.services.domain_classifier import classify_domain
 
 
 LOGGER = logging.getLogger(__name__)
@@ -18,6 +19,8 @@ class AnalyzerAgent:
     """Uses Ollama for insights and deterministic statistics for anomaly flags."""
 
     def __init__(self, model: str, base_url: str, webhook_url: str) -> None:
+        self.model = model
+        self.base_url = base_url
         self.llm = ChatOllama(model=model, base_url=base_url, temperature=0.2, num_ctx=2048, num_predict=500)
         self.anomaly_detector = AnomalyDetector()
         self.alert_router = AlertRouter()
@@ -240,9 +243,8 @@ class AnalyzerAgent:
 
         return questions[:3]
 
-    @staticmethod
-    def _overview_fallback(overview: dict[str, Any]) -> dict[str, Any]:
-        """Provide a rich Grok-style structured walkthrough of the dataset across all user tables."""
+    def _overview_fallback(self, overview: dict[str, Any]) -> dict[str, Any]:
+        """Provide a rich Grok-style structured walkthrough of the dataset across all user tables using domain classifier."""
         tables = overview.get("tables", [])
         if not tables:
             return {
@@ -259,28 +261,14 @@ class AnalyzerAgent:
             column_names = [str(column.get("name")) for column in columns]
             table_name = str(table.get("name"))
             row_count = table.get("row_count", 0)
+            sample_rows = table.get("sample", [])
 
-            col_string = (" ".join(column_names) + " " + table_name).lower()
-
-            # Domain detection and main purpose
-            if any(k in col_string for k in ("house", "housing", "price", "bedroom", "estate", "listing", "rent", "property", "median_house_value")):
-                domain = "Housing & Real Estate Prices"
-                purpose = "Property valuation, housing market trend analysis, and real estate feature pricing models."
-            elif any(k in col_string for k in ("sale", "order", "product", "customer", "revenue", "profit", "store", "unit_price")):
-                domain = "Sales & E-Commerce Transactions"
-                purpose = "Revenue tracking, customer purchasing behavior profiling, and product category performance analysis."
-            elif any(k in col_string for k in ("employee", "salary", "department", "hire", "hr", "payroll")):
-                domain = "Human Resources & Payroll"
-                purpose = "Workforce demographics, department compensation distribution, and employee retention analytics."
-            elif any(k in col_string for k in ("transaction", "account", "balance", "bank", "credit", "amount", "loan")):
-                domain = "Financial & Banking Records"
-                purpose = "Account activity monitoring, credit risk assessment, and financial transaction profiling."
-            elif any(k in col_string for k in ("patient", "clinical", "hospital", "diagnosis", "disease", "treatment")):
-                domain = "Healthcare & Patient Records"
-                purpose = "Clinical outcomes tracking, patient demographics profiling, and healthcare metrics analysis."
-            else:
-                domain = table_name.replace("_", " ").title()
-                purpose = "General exploratory data analysis, statistical profiling, and pattern discovery."
+            dtypes = {str(c.get("name")): str(c.get("type")) for c in columns if "name" in c}
+            domain_info = classify_domain(
+                column_names, dtypes, sample_rows, model=getattr(self, "model", "llama3.2"), base_url=getattr(self, "base_url", "http://localhost:11434")
+            )
+            domain = domain_info.get("domain", table_name.replace("_", " ").title())
+            purpose = domain_info.get("reason", "General exploratory data analysis, statistical profiling, and pattern discovery.")
 
             demographics = [c for c in column_names if any(k in c.lower() for k in ("age", "sex", "gender", "unit", "location", "country", "region", "state", "city"))]
             metrics_cols = [c for c in column_names if any(k in c.lower() for k in ("price", "amount", "cost", "revenue", "salary", "total", "score", "count", "value", "quantity"))]
@@ -316,7 +304,7 @@ class AnalyzerAgent:
         return {
             "answer": "\n\n".join(sections),
             "key_insights": list(dict.fromkeys(insights))[:5],
-            "follow_up_questions": AnalyzerAgent._generate_dynamic_follow_ups(overview),
+            "follow_up_questions": domain_info.get("suggested_questions")[:3] if domain_info.get("suggested_questions") else AnalyzerAgent._generate_dynamic_follow_ups(overview),
         }
 
     @staticmethod
