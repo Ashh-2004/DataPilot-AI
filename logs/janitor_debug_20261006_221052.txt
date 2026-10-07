@@ -1,0 +1,64 @@
+=== Broom Bot Debug Log ===
+Started: 2026-10-06 22:10:52
+==================================================
+
+[2026-10-06 22:10:52.028] [DEBUG] [BROOM] Initializing Broom with DataFrame shape: (10, 3)
+[2026-10-06 22:10:52.029] [DEBUG] [PIPELINE] Initializing CleaningPipeline with DataFrame shape: (10, 3)
+[2026-10-06 22:10:52.029] [DEBUG] [PIPELINE] Pipeline initialized with 10 operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-06 22:10:52.029] [DEBUG] [PIPELINE] Original DataFrame stored - Shape: (10, 3)
+[2026-10-06 22:10:52.030] [DEBUG] [PIPELINE] Initial snapshot stored - Total snapshots: 1
+[2026-10-06 22:10:52.030] [DEBUG] [BROOM] Broom initialized - Pipeline created with 10 available operations
+[2026-10-06 22:10:52.030] [DEBUG] [BROOM] Available operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-06 22:10:52.030] [DEBUG] [BROOM] Broom.clean_columns called with params: remove_empty=True, empty_threshold=0.9, snake_case=True, remove_accents=True
+[2026-10-06 22:10:52.030] [DEBUG] [PIPELINE] Pipeline executing operation: clean_columns
+[2026-10-06 22:10:52.030] [DEBUG] [PIPELINE] Operation args: (), kwargs: {'remove_empty': True, 'empty_threshold': 0.9, 'snake_case': True, 'remove_accents': True}
+[2026-10-06 22:10:52.030] [DEBUG] [PIPELINE] Operation 'clean_columns' found in pipeline
+[2026-10-06 22:10:52.030] [DEBUG] [PIPELINE] Retrieved function: <function clean_columns at 0x000001CB6B858670>
+[2026-10-06 22:10:52.030] [DEBUG] [PIPELINE] Applying CleaningCommand decorator with history list (length: 0)
+[2026-10-06 22:10:52.031] [DEBUG] [PIPELINE] Before operation - DataFrame shape: (10, 3)
+[2026-10-06 22:10:52.031] [DEBUG] [HISTORY] History tracker executing function: clean_columns
+[2026-10-06 22:10:52.031] [DEBUG] [HISTORY] Function args: 1 arguments, kwargs: {'remove_empty': True, 'empty_threshold': 0.9, 'snake_case': True, 'remove_accents': True}
+[2026-10-06 22:10:52.031] [DEBUG] [HISTORY] Input DataFrame detected - Shape: (10, 3)
+[2026-10-06 22:10:52.032] [DEBUG] [HISTORY] Before operation - Missing %: 56.67%
+[2026-10-06 22:10:52.032] [DEBUG] [HISTORY] Executing clean_columns...
+[2026-10-06 22:10:52.036] [DEBUG] [HISTORY] Function clean_columns executed successfully
+[2026-10-06 22:10:52.037] [DEBUG] [HISTORY] Output DataFrame - Shape: (10, 1)
+[2026-10-06 22:10:52.038] [DEBUG] [HISTORY] After operation - Missing %: 0.00%
+[2026-10-06 22:10:52.038] [DEBUG] [HISTORY] Adding entry to history list...
+[2026-10-06 22:10:52.038] [DEBUG] [HISTORY] Shape change detected: . Shape from (10, 3) to (10, 1)
+[2026-10-06 22:10:52.038] [DEBUG] [HISTORY] History entry added - Total entries: 1
+[2026-10-06 22:10:52.038] [DEBUG] [HISTORY] Entry content: {'timestamp': '2026-10-06 22:10:52', 'function': 'clean_columns', 'args': (), 'kwargs': {'remove_empty': True, 'empty_threshold': 0.9, 'snake_case': True, 'remove_accents': True}, 'shape_change': {'before': (10, 3), 'after': (10, 1)}, 'percent_missing_before': np.float64(56.66666666666668), 'percent_missing_after': np.float64(0.0)}
+[2026-10-06 22:10:52.038] [DEBUG] [PIPELINE] After operation - DataFrame shape: (10, 1)
+[2026-10-06 22:10:52.038] [DEBUG] [PIPELINE] History list now has 1 entries
+[2026-10-06 22:10:52.039] [DEBUG] [PIPELINE] Snapshot stored - Total snapshots: 2
+[2026-10-06 22:10:52.039] [DEBUG] [BROOM] clean_columns operation completed
+[2026-10-06 22:10:52.039] [DEBUG] [BROOM] Initializing Broom with DataFrame shape: (10, 3)
+[2026-10-06 22:10:52.039] [DEBUG] [PIPELINE] Initializing CleaningPipeline with DataFrame shape: (10, 3)
+[2026-10-06 22:10:52.039] [DEBUG] [PIPELINE] Pipeline initialized with 10 operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-06 22:10:52.039] [DEBUG] [PIPELINE] Original DataFrame stored - Shape: (10, 3)
+[2026-10-06 22:10:52.039] [DEBUG] [PIPELINE] Initial snapshot stored - Total snapshots: 1
+[2026-10-06 22:10:52.039] [DEBUG] [BROOM] Broom initialized - Pipeline created with 10 available operations
+[2026-10-06 22:10:52.039] [DEBUG] [BROOM] Available operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-06 22:10:52.039] [DEBUG] [BROOM] Broom.clean_columns called with params: remove_empty=True, empty_threshold=0.5, snake_case=True, remove_accents=True
+[2026-10-06 22:10:52.040] [DEBUG] [PIPELINE] Pipeline executing operation: clean_columns
+[2026-10-06 22:10:52.040] [DEBUG] [PIPELINE] Operation args: (), kwargs: {'remove_empty': True, 'empty_threshold': 0.5, 'snake_case': True, 'remove_accents': True}
+[2026-10-06 22:10:52.040] [DEBUG] [PIPELINE] Operation 'clean_columns' found in pipeline
+[2026-10-06 22:10:52.040] [DEBUG] [PIPELINE] Retrieved function: <function clean_columns at 0x000001CB6B858670>
+[2026-10-06 22:10:52.040] [DEBUG] [PIPELINE] Applying CleaningCommand decorator with history list (length: 0)
+[2026-10-06 22:10:52.040] [DEBUG] [PIPELINE] Before operation - DataFrame shape: (10, 3)
+[2026-10-06 22:10:52.040] [DEBUG] [HISTORY] History tracker executing function: clean_columns
+[2026-10-06 22:10:52.040] [DEBUG] [HISTORY] Function args: 1 arguments, kwargs: {'remove_empty': True, 'empty_threshold': 0.5, 'snake_case': True, 'remove_accents': True}
+[2026-10-06 22:10:52.040] [DEBUG] [HISTORY] Input DataFrame detected - Shape: (10, 3)
+[2026-10-06 22:10:52.040] [DEBUG] [HISTORY] Before operation - Missing %: 56.67%
+[2026-10-06 22:10:52.041] [DEBUG] [HISTORY] Executing clean_columns...
+[2026-10-06 22:10:52.042] [DEBUG] [HISTORY] Function clean_columns executed successfully
+[2026-10-06 22:10:52.043] [DEBUG] [HISTORY] Output DataFrame - Shape: (10, 1)
+[2026-10-06 22:10:52.043] [DEBUG] [HISTORY] After operation - Missing %: 0.00%
+[2026-10-06 22:10:52.043] [DEBUG] [HISTORY] Adding entry to history list...
+[2026-10-06 22:10:52.043] [DEBUG] [HISTORY] Shape change detected: . Shape from (10, 3) to (10, 1)
+[2026-10-06 22:10:52.043] [DEBUG] [HISTORY] History entry added - Total entries: 1
+[2026-10-06 22:10:52.043] [DEBUG] [HISTORY] Entry content: {'timestamp': '2026-10-06 22:10:52', 'function': 'clean_columns', 'args': (), 'kwargs': {'remove_empty': True, 'empty_threshold': 0.5, 'snake_case': True, 'remove_accents': True}, 'shape_change': {'before': (10, 3), 'after': (10, 1)}, 'percent_missing_before': np.float64(56.66666666666668), 'percent_missing_after': np.float64(0.0)}
+[2026-10-06 22:10:52.044] [DEBUG] [PIPELINE] After operation - DataFrame shape: (10, 1)
+[2026-10-06 22:10:52.044] [DEBUG] [PIPELINE] History list now has 1 entries
+[2026-10-06 22:10:52.044] [DEBUG] [PIPELINE] Snapshot stored - Total snapshots: 2
+[2026-10-06 22:10:52.044] [DEBUG] [BROOM] clean_columns operation completed

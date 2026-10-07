@@ -1,0 +1,11 @@
+=== Broom Bot Debug Log ===
+Started: 2026-10-06 22:26:16
+==================================================
+
+[2026-10-06 22:26:16.140] [DEBUG] [BROOM] Initializing Broom with DataFrame shape: (0, 0)
+[2026-10-06 22:26:16.140] [DEBUG] [PIPELINE] Initializing CleaningPipeline with DataFrame shape: (0, 0)
+[2026-10-06 22:26:16.140] [DEBUG] [PIPELINE] Pipeline initialized with 10 operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-06 22:26:16.141] [DEBUG] [PIPELINE] Original DataFrame stored - Shape: (0, 0)
+[2026-10-06 22:26:16.141] [DEBUG] [PIPELINE] Initial snapshot stored - Total snapshots: 1
+[2026-10-06 22:26:16.141] [DEBUG] [BROOM] Broom initialized - Pipeline created with 10 available operations
+[2026-10-06 22:26:16.141] [DEBUG] [BROOM] Available operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']

@@ -1,4 +1,4 @@
-"""Isolation Forest anomaly detection with SHAP explanations."""
+"""Anomaly detection with IsolationForest + SHAP, falling back to Z-score when native DLLs are restricted."""
 
 import logging
 import os
@@ -6,11 +6,20 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import shap
 from dotenv import load_dotenv
-from sklearn.ensemble import IsolationForest
 
 LOGGER = logging.getLogger(__name__)
+
+# Try optional imports
+try:
+    import shap
+    from sklearn.ensemble import IsolationForest
+    _SKLEARN_AVAILABLE = True
+except Exception as exc:
+    LOGGER.warning("sklearn/shap not available (%s); falling back to statistical anomaly detection", exc)
+    shap = None
+    IsolationForest = None
+    _SKLEARN_AVAILABLE = False
 
 
 class AnomalyDetector:
@@ -35,31 +44,72 @@ class AnomalyDetector:
 
         numeric_df = numeric_df.replace([np.inf, -np.inf], np.nan)
         numeric_df = numeric_df.fillna(numeric_df.median()).fillna(0.0)
-        model = IsolationForest(contamination=self.contamination, random_state=42)
-        predictions = model.fit_predict(numeric_df)
-        anomaly_indices = np.flatnonzero(predictions == -1)
-        scores = -model.score_samples(numeric_df)
 
-        explanations = self._shap_explanations(model, numeric_df, anomaly_indices)
-        anomaly_columns = sorted({column for columns in explanations.values() for column in columns})
+        if _SKLEARN_AVAILABLE and IsolationForest is not None:
+            try:
+                model = IsolationForest(contamination=self.contamination, random_state=42)
+                predictions = model.fit_predict(numeric_df)
+                anomaly_indices = np.flatnonzero(predictions == -1)
+                scores = -model.score_samples(numeric_df)
+
+                explanations = self._shap_explanations(model, numeric_df, anomaly_indices)
+                anomaly_columns = sorted({column for columns in explanations.values() for column in columns})
+                anomaly_rows = [
+                    {
+                        **self._json_safe_row(df.iloc[index].to_dict()),
+                        "_anomaly_score": float(scores[index]),
+                    }
+                    for index in anomaly_indices
+                ]
+                return {
+                    "anomaly_rows": anomaly_rows,
+                    "anomaly_count": int(len(anomaly_indices)),
+                    "anomaly_columns": anomaly_columns,
+                    "has_anomaly": bool(len(anomaly_indices)),
+                    "anomaly_scores": [float(score) for score in scores],
+                }
+            except Exception:
+                LOGGER.warning("IsolationForest failed, falling back to Z-score", exc_info=True)
+
+        # Fallback: Robust Z-score anomaly detection
+        return self._statistical_detect(df, numeric_df)
+
+    def _statistical_detect(self, df: pd.DataFrame, numeric_df: pd.DataFrame) -> dict[str, Any]:
+        """Pure-numpy Z-score fallback for anomaly detection."""
+        means = numeric_df.mean()
+        stds = numeric_df.std().replace(0, 1.0)
+        z_scores = ((numeric_df - means) / stds).abs()
+        max_z = z_scores.max(axis=1)
+
+        # Flag top contamination fraction or z > 2.5
+        threshold = max(2.5, float(np.percentile(max_z, 100 * (1 - self.contamination))))
+        anomaly_mask = max_z >= threshold
+        anomaly_indices = np.flatnonzero(anomaly_mask)
+
+        flagged_cols = set()
+        for idx in anomaly_indices:
+            row_z = z_scores.iloc[idx]
+            top_cols = row_z.nlargest(3).index.tolist()
+            flagged_cols.update(top_cols)
+
         anomaly_rows = [
             {
                 **self._json_safe_row(df.iloc[index].to_dict()),
-                "_anomaly_score": float(scores[index]),
+                "_anomaly_score": float(max_z.iloc[index]),
             }
             for index in anomaly_indices
         ]
         return {
             "anomaly_rows": anomaly_rows,
             "anomaly_count": int(len(anomaly_indices)),
-            "anomaly_columns": anomaly_columns,
+            "anomaly_columns": sorted(flagged_cols),
             "has_anomaly": bool(len(anomaly_indices)),
-            "anomaly_scores": [float(score) for score in scores],
+            "anomaly_scores": [float(s) for s in max_z],
         }
 
     def _shap_explanations(
         self,
-        model: IsolationForest,
+        model: Any,
         numeric_df: pd.DataFrame,
         anomaly_indices: np.ndarray,
     ) -> dict[int, list[str]]:
@@ -67,21 +117,22 @@ class AnomalyDetector:
         if not len(anomaly_indices):
             return {}
         try:
-            shap_values = shap.TreeExplainer(model).shap_values(numeric_df)
-            if isinstance(shap_values, list):
-                shap_values = shap_values[0]
-            shap_array = np.asarray(shap_values)
-            return {
-                int(index): [
-                    numeric_df.columns[column_index]
-                    for column_index in np.argsort(np.abs(shap_array[index]))[-3:][::-1]
-                ]
-                for index in anomaly_indices
-            }
+            if shap is not None:
+                shap_values = shap.TreeExplainer(model).shap_values(numeric_df)
+                if isinstance(shap_values, list):
+                    shap_values = shap_values[0]
+                shap_array = np.asarray(shap_values)
+                return {
+                    int(index): [
+                        numeric_df.columns[column_index]
+                        for column_index in np.argsort(np.abs(shap_array[index]))[-3:][::-1]
+                    ]
+                    for index in anomaly_indices
+                }
         except Exception:
             LOGGER.warning("SHAP explanation failed; using all numeric columns", exc_info=True)
-            columns = list(numeric_df.columns)
-            return {int(index): columns for index in anomaly_indices}
+        columns = list(numeric_df.columns)
+        return {int(index): columns for index in anomaly_indices}
 
     @staticmethod
     def _empty_result() -> dict[str, Any]:

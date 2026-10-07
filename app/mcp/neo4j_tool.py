@@ -13,23 +13,29 @@ class Neo4jTool:
 
     def record_query(self, question: str, plan: dict[str, Any]) -> None:
         """Persist a query and its intent for future context."""
-        with self.driver.session() as session:
-            session.run(
-                "MERGE (q:Query {question: $question}) SET q.intent = $intent, q.sql_hint = $sql_hint",
-                question=question,
-                intent=plan.get("intent", ""),
-                sql_hint=plan.get("sql_hint", ""),
-            ).consume()
+        try:
+            with self.driver.session() as session:
+                session.run(
+                    "MERGE (q:Query {question: $question}) SET q.intent = $intent, q.sql_hint = $sql_hint",
+                    question=question,
+                    intent=plan.get("intent", ""),
+                    sql_hint=plan.get("sql_hint", ""),
+                ).consume()
+        except Exception:
+            pass
 
     def context(self, entities: list[str]) -> list[dict[str, Any]]:
         """Read known entities related to the requested question."""
-        with self.driver.session() as session:
-            result = session.run(
-                "MATCH (q:Query) WHERE any(entity IN $entities WHERE q.question CONTAINS entity) "
-                "RETURN q.question AS question, q.intent AS intent ORDER BY q.question LIMIT 5",
-                entities=entities,
-            )
-            return [dict(record) for record in result]
+        try:
+            with self.driver.session() as session:
+                result = session.run(
+                    "MATCH (q:Query) WHERE any(entity IN $entities WHERE q.question CONTAINS entity) "
+                    "RETURN q.question AS question, q.intent AS intent ORDER BY q.question LIMIT 5",
+                    entities=entities,
+                )
+                return [dict(record) for record in result]
+        except Exception:
+            return []
 
     def close(self) -> None:
         """Close the Neo4j driver."""

@@ -1,0 +1,119 @@
+# Few-shot examples for DuckDB SQL generation.
+# Add new examples following the same pattern to improve accuracy.
+# Each example has: question, schema_hint (optional), sql
+
+examples:
+
+  # ---- Simple aggregates ----
+  - question: "What is the total revenue?"
+    sql: |
+      SELECT SUM("total_amount") AS total_revenue FROM "sales_data"
+
+  - question: "How many orders are there?"
+    sql: |
+      SELECT COUNT(*) AS order_count FROM "sales_data"
+
+  - question: "What is the average salary?"
+    sql: |
+      SELECT ROUND(AVG("salary"), 2) AS avg_salary FROM "employee_data"
+
+  # ---- Top-N ----
+  - question: "Who are the top 5 customers by total spending?"
+    sql: |
+      SELECT "customer_name", SUM("total_amount") AS total_spent
+      FROM "sales_data"
+      GROUP BY "customer_name"
+      ORDER BY total_spent DESC
+      LIMIT 5
+
+  - question: "What are the 3 least sold products?"
+    sql: |
+      SELECT "product_name", SUM("quantity") AS total_qty
+      FROM "sales_data"
+      GROUP BY "product_name"
+      ORDER BY total_qty ASC
+      LIMIT 3
+
+  # ---- Group by ----
+  - question: "Show revenue by region"
+    sql: |
+      SELECT "region", SUM("total_amount") AS revenue
+      FROM "sales_data"
+      GROUP BY "region"
+      ORDER BY revenue DESC
+
+  - question: "How many employees are in each department?"
+    sql: |
+      SELECT "department", COUNT(*) AS employee_count
+      FROM "employee_data"
+      GROUP BY "department"
+      ORDER BY employee_count DESC
+
+  # ---- Filters ----
+  - question: "Show orders over $500"
+    sql: |
+      SELECT * FROM "sales_data"
+      WHERE "total_amount" > 500
+      ORDER BY "total_amount" DESC
+
+  - question: "Which employees are in Engineering?"
+    sql: |
+      SELECT * FROM "employee_data"
+      WHERE "department" = 'Engineering'
+
+  # ---- Date filters (DuckDB dialect) ----
+  - question: "What were the sales this month?"
+    schema_hint: "Uses current_date and date_trunc for relative dates"
+    sql: |
+      SELECT * FROM "sales_data"
+      WHERE "order_date" >= date_trunc('month', current_date)
+      ORDER BY "order_date"
+
+  - question: "Show orders from last quarter"
+    sql: |
+      SELECT * FROM "sales_data"
+      WHERE "order_date" >= date_trunc('quarter', current_date - INTERVAL '3 months')
+        AND "order_date" < date_trunc('quarter', current_date)
+      ORDER BY "order_date"
+
+  - question: "What were the sales in Q3 2025?"
+    sql: |
+      SELECT * FROM "sales_data"
+      WHERE "order_date" >= '2025-07-01' AND "order_date" < '2025-10-01'
+      ORDER BY "order_date"
+
+  - question: "Monthly revenue trend"
+    sql: |
+      SELECT date_trunc('month', "order_date") AS month,
+             SUM("total_amount") AS revenue
+      FROM "sales_data"
+      GROUP BY month
+      ORDER BY month
+
+  # ---- Percentages ----
+  - question: "What percentage of orders are cancelled?"
+    sql: |
+      SELECT "status",
+             COUNT(*) AS cnt,
+             ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
+      FROM "sales_data"
+      GROUP BY "status"
+      ORDER BY cnt DESC
+
+  # ---- Comparisons ----
+  - question: "Compare average salary between Engineering and Sales"
+    sql: |
+      SELECT "department", ROUND(AVG("salary"), 2) AS avg_salary
+      FROM "employee_data"
+      WHERE "department" IN ('Engineering', 'Sales')
+      GROUP BY "department"
+
+  # ---- Trends ----
+  - question: "Hiring trend by year"
+    sql: |
+      SELECT EXTRACT(YEAR FROM "join_date") AS year,
+             COUNT(*) AS hires
+      FROM "employee_data"
+      GROUP BY year
+      ORDER BY year
+

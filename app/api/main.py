@@ -28,6 +28,8 @@ from app.mcp.neo4j_tool import Neo4jTool
 load_dotenv()
 QUERY_COUNT = Counter("datapilot_queries_total", "Total query requests")
 ERROR_COUNT = Counter("datapilot_errors_total", "Total pipeline errors")
+SQL_RETRY_COUNT = Counter("datapilot_sql_retries_total", "Total SQL self-correction retries")
+SQL_FAILURE_COUNT = Counter("datapilot_sql_failures_total", "Total SQL failures after all retries")
 STAGE_LATENCY = Histogram("datapilot_agent_latency_seconds", "Agent stage latency", ["stage"])
 
 
@@ -42,11 +44,13 @@ class DataPilotApp:
     """Application dependencies and compiled LangGraph pipeline."""
 
     def __init__(self) -> None:
-        duckdb_tool = DuckDBTool(os.getenv("DUCKDB_PATH", "/app/data/datapilot.duckdb"))
-        neo4j_tool = Neo4jTool(os.getenv("NEO4J_URI", "bolt://neo4j:7687"), os.getenv("NEO4J_USER", "neo4j"), os.getenv("NEO4J_PASSWORD", "datapilot"))
-        planner = PlannerAgent(duckdb_tool, os.getenv("OLLAMA_MODEL", "llama3.2"), os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"))
-        executor = ExecutorAgent(duckdb_tool, neo4j_tool)
-        analyzer = AnalyzerAgent(os.getenv("OLLAMA_MODEL", "llama3.2"), os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"), os.getenv("N8N_WEBHOOK_URL", "http://n8n:5678/webhook/datapilot-anomaly"))
+        model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        duckdb_tool = DuckDBTool(os.getenv("DUCKDB_PATH", "./data/datapilot.duckdb"))
+        neo4j_tool = Neo4jTool(os.getenv("NEO4J_URI", "bolt://localhost:7687"), os.getenv("NEO4J_USER", "neo4j"), os.getenv("NEO4J_PASSWORD", "datapilot"))
+        planner = PlannerAgent(duckdb_tool, model, base_url)
+        executor = ExecutorAgent(duckdb_tool, neo4j_tool, model=model, base_url=base_url)
+        analyzer = AnalyzerAgent(model, base_url, os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/datapilot-anomaly"))
 
         def planner_node(state: PipelineState) -> PipelineState:
             with STAGE_LATENCY.labels("planner").time():
@@ -103,21 +107,44 @@ def query(request: QueryRequest) -> dict[str, Any]:
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Seed DuckDB from one CSV or JSON upload."""
+    """Seed DuckDB from CSV, JSON, Excel, or Parquet upload with databroom cleaning."""
+    from app.services.cleaning import sanitize_table_name
+
     suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in {".csv", ".json"}:
-        raise HTTPException(status_code=415, detail="Only CSV and JSON files are supported.")
-    table_name = re.sub(r"[^A-Za-z0-9_]", "_", Path(file.filename or "uploaded").stem)
-    if not table_name or table_name[0].isdigit():
-        table_name = f"uploaded_{table_name}"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
-        temporary.write(await file.read())
-        temporary_path = temporary.name
+    supported_suffixes = {".csv", ".json", ".xlsx", ".xls", ".parquet"}
+    if suffix not in supported_suffixes:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{suffix}'. Supported: {', '.join(sorted(supported_suffixes))}")
+
+    existing_tables = app.state.datapilot.duckdb_tool.list_tables()
+    table_name = sanitize_table_name(Path(file.filename or "uploaded").stem, existing_tables)
+
+    # Persist the untouched raw file on disk
+    raw_dir = Path("data/raw")
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_disk_path = raw_dir / f"{table_name}_raw{suffix}"
+    
+    file_bytes = await file.read()
+    with open(raw_disk_path, "wb") as f:
+        f.write(file_bytes)
+
+    # Load and clean into DuckDB
     try:
-        rows = app.state.datapilot.duckdb_tool.load_file(temporary_path, table_name)
-    finally:
-        Path(temporary_path).unlink(missing_ok=True)
-    return {"table": table_name, "rows": rows}
+        rows = app.state.datapilot.duckdb_tool.load_file(str(raw_disk_path), table_name)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load file: {exc}") from exc
+
+    return {
+        "table": table_name,
+        "rows": rows,
+        "cleaning": app.state.datapilot.duckdb_tool.last_cleaning_report,
+    }
+
+
+@app.post("/reset")
+def reset() -> dict[str, str]:
+    """Clear all user tables from DuckDB and reset database state."""
+    app.state.datapilot.duckdb_tool.reset_database()
+    return {"message": "Database and active tables successfully reset."}
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

@@ -1,0 +1,94 @@
+=== Broom Bot Debug Log ===
+Started: 2026-10-07 19:05:55
+==================================================
+
+[2026-10-07 19:05:55.547] [DEBUG] [BROOM] Initializing Broom with DataFrame shape: (25000, 38)
+[2026-10-07 19:05:55.548] [DEBUG] [PIPELINE] Initializing CleaningPipeline with DataFrame shape: (25000, 38)
+[2026-10-07 19:05:55.555] [DEBUG] [PIPELINE] Pipeline initialized with 10 operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-07 19:05:55.555] [DEBUG] [PIPELINE] Original DataFrame stored - Shape: (25000, 38)
+[2026-10-07 19:05:55.556] [DEBUG] [PIPELINE] Initial snapshot stored - Total snapshots: 1
+[2026-10-07 19:05:55.556] [DEBUG] [BROOM] Broom initialized - Pipeline created with 10 available operations
+[2026-10-07 19:05:55.557] [DEBUG] [BROOM] Available operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-07 19:05:55.557] [DEBUG] [BROOM] Broom.clean_all called
+[2026-10-07 19:05:55.557] [DEBUG] [PIPELINE] Pipeline executing operation: clean_all
+[2026-10-07 19:05:55.557] [DEBUG] [PIPELINE] Operation args: (), kwargs: {}
+[2026-10-07 19:05:55.558] [DEBUG] [PIPELINE] Operation 'clean_all' found in pipeline
+[2026-10-07 19:05:55.558] [DEBUG] [PIPELINE] Retrieved function: <function clean_all at 0x0000020EF3B8BB00>
+[2026-10-07 19:05:55.558] [DEBUG] [PIPELINE] Applying CleaningCommand decorator with history list (length: 0)
+[2026-10-07 19:05:55.558] [DEBUG] [PIPELINE] Before operation - DataFrame shape: (25000, 38)
+[2026-10-07 19:05:55.558] [DEBUG] [HISTORY] History tracker executing function: clean_all
+[2026-10-07 19:05:55.559] [DEBUG] [HISTORY] Function args: 1 arguments, kwargs: {}
+[2026-10-07 19:05:55.559] [DEBUG] [HISTORY] Input DataFrame detected - Shape: (25000, 38)
+[2026-10-07 19:05:55.574] [DEBUG] [HISTORY] Before operation - Missing %: 9.53%
+[2026-10-07 19:05:55.574] [DEBUG] [HISTORY] Executing clean_all...
+[2026-10-07 19:05:56.293] [DEBUG] [HISTORY] Function clean_all executed successfully
+[2026-10-07 19:05:56.307] [DEBUG] [HISTORY] Output DataFrame - Shape: (25000, 34)
+[2026-10-07 19:05:56.307] [DEBUG] [HISTORY] After operation - Missing %: 0.13%
+[2026-10-07 19:05:56.307] [DEBUG] [HISTORY] Adding entry to history list...
+[2026-10-07 19:05:56.307] [DEBUG] [HISTORY] Shape change detected: . Shape from (25000, 38) to (25000, 34)
+[2026-10-07 19:05:56.307] [DEBUG] [HISTORY] History entry added - Total entries: 1
+[2026-10-07 19:05:56.309] [DEBUG] [HISTORY] Entry content: {'timestamp': '2026-10-07 19:05:56', 'function': 'clean_all', 'args': (), 'kwargs': {}, 'shape_change': {'before': (25000, 38), 'after': (25000, 34)}, 'percent_missing_before': np.float64(9.534947368421053), 'percent_missing_after': np.float64(0.13094117647058826)}
+[2026-10-07 19:05:56.309] [DEBUG] [PIPELINE] After operation - DataFrame shape: (25000, 34)
+[2026-10-07 19:05:56.309] [DEBUG] [PIPELINE] History list now has 1 entries
+[2026-10-07 19:05:56.316] [DEBUG] [PIPELINE] Snapshot stored - Total snapshots: 2
+[2026-10-07 19:05:56.317] [DEBUG] [BROOM] clean_all operation completed
+[2026-10-07 19:11:25.957] [DEBUG] [BROOM] Initializing Broom with DataFrame shape: (25000, 38)
+[2026-10-07 19:11:25.958] [DEBUG] [PIPELINE] Initializing CleaningPipeline with DataFrame shape: (25000, 38)
+[2026-10-07 19:11:25.963] [DEBUG] [PIPELINE] Pipeline initialized with 10 operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-07 19:11:25.963] [DEBUG] [PIPELINE] Original DataFrame stored - Shape: (25000, 38)
+[2026-10-07 19:11:25.963] [DEBUG] [PIPELINE] Initial snapshot stored - Total snapshots: 1
+[2026-10-07 19:11:25.963] [DEBUG] [BROOM] Broom initialized - Pipeline created with 10 available operations
+[2026-10-07 19:11:25.964] [DEBUG] [BROOM] Available operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-07 19:11:25.964] [DEBUG] [BROOM] Broom.clean_all called
+[2026-10-07 19:11:25.964] [DEBUG] [PIPELINE] Pipeline executing operation: clean_all
+[2026-10-07 19:11:25.964] [DEBUG] [PIPELINE] Operation args: (), kwargs: {}
+[2026-10-07 19:11:25.964] [DEBUG] [PIPELINE] Operation 'clean_all' found in pipeline
+[2026-10-07 19:11:25.964] [DEBUG] [PIPELINE] Retrieved function: <function clean_all at 0x0000020EF3B8BB00>
+[2026-10-07 19:11:25.964] [DEBUG] [PIPELINE] Applying CleaningCommand decorator with history list (length: 0)
+[2026-10-07 19:11:25.964] [DEBUG] [PIPELINE] Before operation - DataFrame shape: (25000, 38)
+[2026-10-07 19:11:25.964] [DEBUG] [HISTORY] History tracker executing function: clean_all
+[2026-10-07 19:11:25.965] [DEBUG] [HISTORY] Function args: 1 arguments, kwargs: {}
+[2026-10-07 19:11:25.965] [DEBUG] [HISTORY] Input DataFrame detected - Shape: (25000, 38)
+[2026-10-07 19:11:25.982] [DEBUG] [HISTORY] Before operation - Missing %: 9.53%
+[2026-10-07 19:11:25.982] [DEBUG] [HISTORY] Executing clean_all...
+[2026-10-07 19:11:26.619] [DEBUG] [HISTORY] Function clean_all executed successfully
+[2026-10-07 19:11:26.635] [DEBUG] [HISTORY] Output DataFrame - Shape: (25000, 34)
+[2026-10-07 19:11:26.635] [DEBUG] [HISTORY] After operation - Missing %: 0.13%
+[2026-10-07 19:11:26.636] [DEBUG] [HISTORY] Adding entry to history list...
+[2026-10-07 19:11:26.636] [DEBUG] [HISTORY] Shape change detected: . Shape from (25000, 38) to (25000, 34)
+[2026-10-07 19:11:26.636] [DEBUG] [HISTORY] History entry added - Total entries: 1
+[2026-10-07 19:11:26.636] [DEBUG] [HISTORY] Entry content: {'timestamp': '2026-10-07 19:11:26', 'function': 'clean_all', 'args': (), 'kwargs': {}, 'shape_change': {'before': (25000, 38), 'after': (25000, 34)}, 'percent_missing_before': np.float64(9.534947368421053), 'percent_missing_after': np.float64(0.13094117647058826)}
+[2026-10-07 19:11:26.637] [DEBUG] [PIPELINE] After operation - DataFrame shape: (25000, 34)
+[2026-10-07 19:11:26.637] [DEBUG] [PIPELINE] History list now has 1 entries
+[2026-10-07 19:11:26.642] [DEBUG] [PIPELINE] Snapshot stored - Total snapshots: 2
+[2026-10-07 19:11:26.642] [DEBUG] [BROOM] clean_all operation completed
+[2026-10-07 19:17:38.648] [DEBUG] [BROOM] Initializing Broom with DataFrame shape: (3069, 6)
+[2026-10-07 19:17:38.648] [DEBUG] [PIPELINE] Initializing CleaningPipeline with DataFrame shape: (3069, 6)
+[2026-10-07 19:17:38.648] [DEBUG] [PIPELINE] Pipeline initialized with 10 operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Original DataFrame stored - Shape: (3069, 6)
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Initial snapshot stored - Total snapshots: 1
+[2026-10-07 19:17:38.649] [DEBUG] [BROOM] Broom initialized - Pipeline created with 10 available operations
+[2026-10-07 19:17:38.649] [DEBUG] [BROOM] Available operations: ['clean_all', 'clean_columns', 'clean_rows', 'normalize_column_names', 'normalize_values', 'promote_headers', 'remove_empty_cols', 'remove_empty_rows', 'standardize_column_names', 'standardize_values']
+[2026-10-07 19:17:38.649] [DEBUG] [BROOM] Broom.clean_all called
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Pipeline executing operation: clean_all
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Operation args: (), kwargs: {}
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Operation 'clean_all' found in pipeline
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Retrieved function: <function clean_all at 0x0000020EF3B8BB00>
+[2026-10-07 19:17:38.649] [DEBUG] [PIPELINE] Applying CleaningCommand decorator with history list (length: 0)
+[2026-10-07 19:17:38.651] [DEBUG] [PIPELINE] Before operation - DataFrame shape: (3069, 6)
+[2026-10-07 19:17:38.651] [DEBUG] [HISTORY] History tracker executing function: clean_all
+[2026-10-07 19:17:38.651] [DEBUG] [HISTORY] Function args: 1 arguments, kwargs: {}
+[2026-10-07 19:17:38.651] [DEBUG] [HISTORY] Input DataFrame detected - Shape: (3069, 6)
+[2026-10-07 19:17:38.651] [DEBUG] [HISTORY] Before operation - Missing %: 5.78%
+[2026-10-07 19:17:38.652] [DEBUG] [HISTORY] Executing clean_all...
+[2026-10-07 19:17:38.674] [DEBUG] [HISTORY] Function clean_all executed successfully
+[2026-10-07 19:17:38.675] [DEBUG] [HISTORY] Output DataFrame - Shape: (3069, 5)
+[2026-10-07 19:17:38.675] [DEBUG] [HISTORY] After operation - Missing %: 0.00%
+[2026-10-07 19:17:38.675] [DEBUG] [HISTORY] Adding entry to history list...
+[2026-10-07 19:17:38.675] [DEBUG] [HISTORY] Shape change detected: . Shape from (3069, 6) to (3069, 5)
+[2026-10-07 19:17:38.675] [DEBUG] [HISTORY] History entry added - Total entries: 1
+[2026-10-07 19:17:38.675] [DEBUG] [HISTORY] Entry content: {'timestamp': '2026-10-07 19:17:38', 'function': 'clean_all', 'args': (), 'kwargs': {}, 'shape_change': {'before': (3069, 6), 'after': (3069, 5)}, 'percent_missing_before': np.float64(5.783642880417075), 'percent_missing_after': np.float64(0.0)}
+[2026-10-07 19:17:38.675] [DEBUG] [PIPELINE] After operation - DataFrame shape: (3069, 5)
+[2026-10-07 19:17:38.676] [DEBUG] [PIPELINE] History list now has 1 entries
+[2026-10-07 19:17:38.676] [DEBUG] [PIPELINE] Snapshot stored - Total snapshots: 2
+[2026-10-07 19:17:38.676] [DEBUG] [BROOM] clean_all operation completed

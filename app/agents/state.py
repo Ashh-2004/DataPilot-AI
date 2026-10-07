@@ -7,6 +7,7 @@ class PipelineState(TypedDict, total=False):
     """State passed explicitly between pipeline agents."""
 
     question: str
+    original_question: str  # before follow-up rewriting
     history: list[dict[str, str]]
     dataset_overview: dict[str, Any]
     plan: dict[str, Any]
@@ -22,3 +23,9 @@ class PipelineState(TypedDict, total=False):
     anomaly_details: dict[str, Any] | None
     anomaly_result: dict[str, Any]
     error: str | None
+
+    # --- Retry / debug fields (Goal 2) ---
+    sql_attempts: list[dict[str, Any]]  # log of each SQL attempt
+    retry_count: int
+    final_sql: str | None
+    schema_context: str  # injected schema profile text
