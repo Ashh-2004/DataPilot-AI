@@ -51,17 +51,17 @@ class AnalyzerAgent:
         summary = results_df.describe().to_string() if not results_df.empty else "No rows returned."
         
         is_overview = state.get("plan", {}).get("intent") == "dataset_overview"
+        fallback = self._overview_fallback(overview)
         if is_overview:
-            fallback = self._overview_fallback(overview)
             prompt_text = (
                 "You are an expert AI Data Scientist like Grok or ChatGPT.\n"
                 "The user is asking: 'What is this dataset about?'\n\n"
                 "INSTRUCTIONS:\n"
                 "Provide a comprehensive, beautifully structured dataset overview in Markdown format matching Grok's style.\n\n"
                 "REQUIRED STRUCTURE:\n"
-                "1. **Headline**: Bold title identifying the exact dataset domain (e.g., **This is a COVID-19 Patient Risk Analysis dataset**).\n"
+                "1. **Headline**: Bold title identifying the exact dataset domain (e.g., **This is a Sales & E-Commerce Transactions dataset**).\n"
                 "2. **### Key Characteristics**: Bulleted list with Size (X rows × Y columns), Source/Domain style, and Main Purpose.\n"
-                "3. **### Core Column Categories**: Group columns into logical categories (e.g., Demographics, Clinical & Severity Markers, Comorbidities, Derived Features, Outcomes).\n"
+                "3. **### Core Column Categories**: Group columns into logical categories.\n"
                 "4. **### Concluding Summary**: A concise 2-sentence summary explaining what the dataset is used for.\n\n"
                 "CRITICAL RULES:\n"
                 "- Do NOT talk about SQL, database errors, or isolation forest anomaly scores.\n"
@@ -69,9 +69,8 @@ class AnalyzerAgent:
                 f"Dataset Profile & Sample: {overview}\n"
             )
         else:
-            fallback = self._overview_fallback(overview)
             prompt_text = (
-                "You are a expert AI Data Scientist. Answer the user's question directly in conversational Markdown.\n"
+                "You are an expert AI Data Scientist. Answer the user's question directly in conversational Markdown.\n"
                 "Use the query results and dataset profile below to write a clear, natural language answer with key insights.\n"
                 "Do NOT talk about SQL syntax or internal database execution.\n\n"
                 f"User Question: {state['question']}\n"
@@ -88,7 +87,14 @@ class AnalyzerAgent:
             LOGGER.warning("Analyzer LLM invocation failed or timed out: %s; using deterministic fallback", exc)
             analysis = fallback
 
-        if is_overview or not analysis.get("answer") or self._is_clarification_response(analysis.get("answer", "")):
+        if is_overview:
+            if not self._is_valid_overview_answer(analysis.get("answer", ""), overview):
+                analysis["answer"] = fallback["answer"]
+                analysis["key_insights"] = fallback["key_insights"]
+                analysis["follow_up_questions"] = fallback["follow_up_questions"]
+            elif not analysis.get("follow_up_questions"):
+                analysis["follow_up_questions"] = fallback["follow_up_questions"]
+        elif not analysis.get("answer") or self._is_clarification_response(analysis.get("answer", "")):
             analysis["answer"] = fallback["answer"]
             analysis["key_insights"] = fallback["key_insights"]
             analysis["follow_up_questions"] = fallback["follow_up_questions"]
@@ -181,33 +187,83 @@ class AnalyzerAgent:
         )
 
     @staticmethod
+    def _generate_dynamic_follow_ups(overview: dict[str, Any]) -> list[str]:
+        """Generate domain-agnostic follow-up questions from actual dataset columns."""
+        tables = overview.get("tables", [])
+        if not tables:
+            return [
+                "Can you provide summary statistics for this dataset?",
+                "What are the main columns and data types?",
+                "Are there any missing or duplicate values?",
+            ]
+
+        numeric_cols: list[str] = []
+        categorical_cols: list[str] = []
+        date_cols: list[str] = []
+
+        for tbl in tables:
+            for col in tbl.get("columns", []):
+                cname = str(col.get("name", ""))
+                ctype = str(col.get("type", "")).upper()
+                if any(t in ctype for t in ("INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC", "BIGINT", "SMALLINT", "HUGEINT")):
+                    if cname not in numeric_cols:
+                        numeric_cols.append(cname)
+                elif any(t in ctype for t in ("DATE", "TIMESTAMP", "TIME")):
+                    if cname not in date_cols:
+                        date_cols.append(cname)
+                else:
+                    if cname not in categorical_cols:
+                        categorical_cols.append(cname)
+
+        questions: list[str] = []
+        if numeric_cols:
+            questions.append(f"What is the distribution of {numeric_cols[0]}?")
+        if categorical_cols and numeric_cols:
+            questions.append(f"Which {categorical_cols[0]} has the highest {numeric_cols[0]}?")
+        elif categorical_cols:
+            questions.append(f"What are the top categories in {categorical_cols[0]}?")
+        if date_cols and numeric_cols:
+            questions.append(f"How has {numeric_cols[0]} changed over time by {date_cols[0]}?")
+        elif date_cols:
+            questions.append(f"What is the timeline range of {date_cols[0]}?")
+        if len(numeric_cols) >= 2 and len(questions) < 3:
+            questions.append(f"What is the relationship between {numeric_cols[0]} and {numeric_cols[1]}?")
+
+        fallback_defaults = [
+            "What are the top summary statistics across all columns?",
+            "Are there any unusual outliers or anomalies in the data?",
+            "Can you break down the dataset by key dimensions?",
+        ]
+        for default_q in fallback_defaults:
+            if len(questions) < 3 and default_q not in questions:
+                questions.append(default_q)
+
+        return questions[:3]
+
+    @staticmethod
     def _overview_fallback(overview: dict[str, Any]) -> dict[str, Any]:
-        """Provide a rich Grok-style structured walkthrough of the dataset."""
+        """Provide a rich Grok-style structured walkthrough of the dataset across all user tables."""
         tables = overview.get("tables", [])
         if not tables:
             return {
                 "answer": "No dataset is currently loaded. Please upload a dataset in the sidebar to begin chatting with your data.",
                 "key_insights": [],
-                "follow_up_questions": [],
+                "follow_up_questions": AnalyzerAgent._generate_dynamic_follow_ups(overview),
             }
-        
+
         sections: list[str] = []
         insights: list[str] = []
 
-        # Focus on the most recently uploaded table (tables[0])
-        for table in tables[:1]:
+        for table in tables:
             columns = table.get("columns", [])
             column_names = [str(column.get("name")) for column in columns]
             table_name = str(table.get("name"))
             row_count = table.get("row_count", 0)
 
             col_string = (" ".join(column_names) + " " + table_name).lower()
-            
+
             # Domain detection and main purpose
-            if any(k in col_string for k in ("covid", "death", "case", "vaccine", "confirmed", "patient", "epidemic", "infection", "clasiffication", "pneumonia", "intubed", "icu", "comorbidity")):
-                domain = "COVID-19 Patient Risk Analysis"
-                purpose = "Supporting risk stratification, clinical severity analysis, and mortality outcome prediction based on patient demographics, comorbidities, and hospital severity indicators."
-            elif any(k in col_string for k in ("house", "housing", "price", "bedroom", "estate", "listing", "rent", "property", "median_house_value")):
+            if any(k in col_string for k in ("house", "housing", "price", "bedroom", "estate", "listing", "rent", "property", "median_house_value")):
                 domain = "Housing & Real Estate Prices"
                 purpose = "Property valuation, housing market trend analysis, and real estate feature pricing models."
             elif any(k in col_string for k in ("sale", "order", "product", "customer", "revenue", "profit", "store", "unit_price")):
@@ -219,28 +275,27 @@ class AnalyzerAgent:
             elif any(k in col_string for k in ("transaction", "account", "balance", "bank", "credit", "amount", "loan")):
                 domain = "Financial & Banking Records"
                 purpose = "Account activity monitoring, credit risk assessment, and financial transaction profiling."
+            elif any(k in col_string for k in ("patient", "clinical", "hospital", "diagnosis", "disease", "treatment")):
+                domain = "Healthcare & Patient Records"
+                purpose = "Clinical outcomes tracking, patient demographics profiling, and healthcare metrics analysis."
             else:
                 domain = table_name.replace("_", " ").title()
                 purpose = "General exploratory data analysis, statistical profiling, and pattern discovery."
 
-            # Group columns into logical categories (matching Grok's structure)
-            demographics = [c for c in column_names if any(k in c.lower() for k in ("age", "sex", "gender", "patient_type", "usmer", "unit", "location", "country", "region", "state", "city"))]
-            clinical = [c for c in column_names if any(k in c.lower() for k in ("pneumonia", "intub", "icu", "clasiffication", "classification", "result", "severity", "status", "test", "stage"))]
-            comorbidities = [c for c in column_names if any(k in c.lower() for k in ("diabetes", "copd", "asthma", "inmsupr", "hipertension", "hypertension", "other_disease", "cardio", "obesity", "renal", "tobacco", "pregnant", "smoke"))]
-            outcomes = [c for c in column_names if any(k in c.lower() for k in ("died", "death", "date", "recovery", "survival", "score", "risk", "critical", "count", "target", "label"))]
-            other_cols = [c for c in column_names if c not in demographics + clinical + comorbidities + outcomes]
+            demographics = [c for c in column_names if any(k in c.lower() for k in ("age", "sex", "gender", "unit", "location", "country", "region", "state", "city"))]
+            metrics_cols = [c for c in column_names if any(k in c.lower() for k in ("price", "amount", "cost", "revenue", "salary", "total", "score", "count", "value", "quantity"))]
+            dates_cols = [c for c in column_names if any(k in c.lower() for k in ("date", "time", "year", "month", "created", "updated", "joined"))]
+            other_cols = [c for c in column_names if c not in demographics + metrics_cols + dates_cols]
 
             col_cats: list[str] = []
             if demographics:
-                col_cats.append(f"- **Demographics & Profile**: " + ", ".join([f"`{c}`" for c in demographics]))
-            if clinical:
-                col_cats.append(f"- **Clinical & Severity Markers**: " + ", ".join([f"`{c}`" for c in clinical]))
-            if comorbidities:
-                col_cats.append(f"- **Comorbidities & Medical History**: " + ", ".join([f"`{c}`" for c in comorbidities]))
-            if outcomes:
-                col_cats.append(f"- **Outcomes & Derived Risk Indicators**: " + ", ".join([f"`{c}`" for c in outcomes]))
+                col_cats.append("- **Demographics & Identification**: " + ", ".join([f"`{c}`" for c in demographics]))
+            if metrics_cols:
+                col_cats.append("- **Numeric & KPI Metrics**: " + ", ".join([f"`{c}`" for c in metrics_cols]))
+            if dates_cols:
+                col_cats.append("- **Dates & Timestamps**: " + ", ".join([f"`{c}`" for c in dates_cols]))
             if other_cols:
-                col_cats.append(f"- **Additional Attributes**: " + ", ".join([f"`{c}`" for c in other_cols[:12]]))
+                col_cats.append("- **Attributes & Descriptors**: " + ", ".join([f"`{c}`" for c in other_cols[:12]]))
 
             col_breakdown = "\n".join(col_cats) if col_cats else ", ".join([f"`{c}`" for c in column_names[:15]])
 
@@ -253,24 +308,15 @@ class AnalyzerAgent:
                 f"### Core Column Breakdown & Categories\n"
                 f"{col_breakdown}\n\n"
                 f"### Summary\n"
-                f"In short, the file is a cleaned and structured collection of {domain.lower()} data designed for analyzing trends, evaluating risk factors, and performing conversational queries."
+                f"In short, the table `{table_name}` is a structured collection of {domain.lower()} data designed for analyzing trends, evaluating key metrics, and performing conversational queries."
             )
             sections.append(answer)
-
-            insights.append(f"{domain} dataset loaded with {row_count:,} records across {len(column_names)} columns.")
-            if comorbidities:
-                insights.append(f"Includes medical comorbidity markers: {', '.join([f'`{c}`' for c in comorbidities[:5]])}.")
-            if outcomes:
-                insights.append(f"Tracks key outcome metrics: {', '.join([f'`{c}`' for c in outcomes[:5]])}.")
+            insights.append(f"{domain} table `{table_name}` loaded with {row_count:,} records across {len(column_names)} columns.")
 
         return {
             "answer": "\n\n".join(sections),
             "key_insights": list(dict.fromkeys(insights))[:5],
-            "follow_up_questions": [
-                "What is the distribution of key risk factors or patient outcomes?",
-                "Which categories show the highest mortality or risk indicators?",
-                "Can you show summary statistics for the numerical columns?",
-            ],
+            "follow_up_questions": AnalyzerAgent._generate_dynamic_follow_ups(overview),
         }
 
     @staticmethod
