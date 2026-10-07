@@ -137,6 +137,7 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
         "table": table_name,
         "rows": rows,
         "cleaning": app.state.datapilot.duckdb_tool.last_cleaning_report,
+        "report": app.state.datapilot.duckdb_tool.last_dataset_report,
     }
 
 

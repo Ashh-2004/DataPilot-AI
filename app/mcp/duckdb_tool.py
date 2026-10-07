@@ -29,6 +29,7 @@ class DuckDBTool:
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         self.database_path = database_path
         self.last_cleaning_report: dict[str, Any] = {}
+        self.last_dataset_report: dict[str, Any] = {}
         self._ensure_metadata_tables()
 
     # ------------------------------------------------------------------
@@ -39,7 +40,7 @@ class DuckDBTool:
         return duckdb.connect(self.database_path)
 
     def _ensure_metadata_tables(self) -> None:
-        """Create metadata tables for cleaning reports and column mappings if missing."""
+        """Create metadata tables for cleaning reports, column mappings, and dataset reports if missing."""
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS _cleaning_reports (
@@ -53,6 +54,15 @@ class DuckDBTool:
                     table_name VARCHAR PRIMARY KEY,
                     mapping JSON,
                     created_at TIMESTAMP DEFAULT current_timestamp
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS _dataset_reports (
+                    table_name VARCHAR,
+                    version INTEGER,
+                    report JSON,
+                    created_at TIMESTAMP DEFAULT current_timestamp,
+                    PRIMARY KEY (table_name, version)
                 )
             """)
 
@@ -94,9 +104,11 @@ class DuckDBTool:
             try:
                 conn.execute("DELETE FROM _cleaning_reports")
                 conn.execute("DELETE FROM _column_mappings")
+                conn.execute("DELETE FROM _dataset_reports")
             except Exception:
                 pass
         self.last_cleaning_report = {}
+        self.last_dataset_report = {}
 
     # ------------------------------------------------------------------
     # Read-only query execution
@@ -119,13 +131,19 @@ class DuckDBTool:
             return explain_sql(clean_sql, connection)
 
     # ------------------------------------------------------------------
-    # File loading with cleaning pipeline
+    # File loading with cleaning pipeline & dataset report assembly
     # ------------------------------------------------------------------
 
-    def load_file(self, file_path: str, table_name: str) -> int:
-        """Load a file into DuckDB with the full cleaning pipeline.
+    def load_file(
+        self,
+        file_path: str,
+        table_name: str,
+        model: str = "llama3.2",
+        base_url: str = "http://localhost:11434",
+    ) -> int:
+        """Load a file into DuckDB with the full cleaning pipeline and report assembly.
 
-        Pipeline: read -> keep raw -> databroom clean -> type inference -> load.
+        Pipeline: read -> keep raw -> databroom clean -> type inference -> load -> report.
         Raw data is preserved in <table_name>__raw.
         """
         if not _IDENTIFIER.fullmatch(table_name):
@@ -154,8 +172,9 @@ class DuckDBTool:
             conn.register("_cleaned_upload", result.cleaned_df)
             conn.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM _cleaned_upload')
 
-        # --- Persist metadata -------------------------------------------------
+        # --- Persist metadata & assemble dataset report -----------------------
         self._save_metadata(table_name, result)
+        self.generate_and_save_dataset_report(table_name, result, model=model, base_url=base_url)
 
         LOGGER.info(
             "Loaded table %s: %d rows (%d raw), quality=%d/100",
@@ -163,6 +182,105 @@ class DuckDBTool:
             result.report.get("quality_score", 0),
         )
         return len(result.cleaned_df)
+
+    def generate_and_save_dataset_report(
+        self,
+        table_name: str,
+        result: CleaningResult,
+        model: str = "llama3.2",
+        base_url: str = "http://localhost:11434",
+    ) -> dict[str, Any]:
+        """Run profiling + quality + domain classification, assemble report, and persist to _dataset_reports table."""
+        from app.services.domain_classifier import classify_domain
+
+        profile = build_schema_profile(self.database_path, table_name)
+
+        with duckdb.connect(self.database_path, read_only=True) as conn:
+            sample_df = conn.execute(f'SELECT * FROM "{table_name}" LIMIT 5').fetchdf()
+            sample_rows = sample_df.astype(object).where(pd.notna(sample_df), None).to_dict(orient="records")
+
+        columns = [c["name"] for c in profile.get("columns", [])]
+        dtypes = {c["name"]: c["type"] for c in profile.get("columns", [])}
+        domain_info = classify_domain(columns, dtypes, sample_rows, model=model, base_url=base_url)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM _dataset_reports WHERE table_name = ?",
+                [table_name],
+            ).fetchone()
+            version = (row[0] if row else 0) + 1
+
+        report: dict[str, Any] = {
+            "table_name": table_name,
+            "version": version,
+            "rows_raw": result.report.get("rows_before", profile.get("row_count", 0)),
+            "rows_clean": profile.get("row_count", 0),
+            "columns_count": len(columns),
+            "quality": {
+                "raw_score": result.report.get("raw_score", 0),
+                "clean_score": result.report.get("clean_score", 0),
+                "issues": result.report.get("issues", []),
+            },
+            "domain": domain_info,
+            "profile": profile,
+            "cleaning_summary": result.report,
+        }
+
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO _dataset_reports (table_name, version, report, created_at)
+                   VALUES (?, ?, ?::JSON, current_timestamp)""",
+                [table_name, version, json.dumps(report, default=str)],
+            )
+
+        self.last_dataset_report = report
+        return report
+
+    def get_dataset_report(self, table_name: str, version: int | None = None) -> dict[str, Any] | None:
+        """Retrieve dataset report for a table, optionally for a specific version."""
+        try:
+            with self._connect() as conn:
+                if version is not None:
+                    row = conn.execute(
+                        "SELECT report FROM _dataset_reports WHERE table_name = ? AND version = ?",
+                        [table_name, version],
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT report FROM _dataset_reports WHERE table_name = ? ORDER BY version DESC LIMIT 1",
+                        [table_name],
+                    ).fetchone()
+                if row and row[0]:
+                    return json.loads(row[0])
+        except Exception:
+            LOGGER.warning("Failed to fetch dataset report for %s", table_name, exc_info=True)
+        return None
+
+    def get_all_dataset_summaries(self) -> list[dict[str, Any]]:
+        """Return list of all loaded datasets with latest version and report summary."""
+        user_tables = self.list_user_tables()
+        summaries: list[dict[str, Any]] = []
+        for tbl in user_tables:
+            report = self.get_dataset_report(tbl)
+            if report:
+                summaries.append({
+                    "table_name": tbl,
+                    "version": report.get("version", 1),
+                    "rows_clean": report.get("rows_clean", 0),
+                    "domain": report.get("domain", {}).get("domain", "Unknown"),
+                    "clean_score": report.get("quality", {}).get("clean_score", 0),
+                    "report": report,
+                })
+            else:
+                summaries.append({
+                    "table_name": tbl,
+                    "version": 1,
+                    "rows_clean": 0,
+                    "domain": "Unknown",
+                    "clean_score": 0,
+                    "report": None,
+                })
+        return summaries
 
     @staticmethod
     def _read_file(file_path: str, suffix: str) -> pd.DataFrame:
