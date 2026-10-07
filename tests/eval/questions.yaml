@@ -242,3 +242,19 @@ datasets:
       - text: "What is the average salary of employees who made sales over 100k?"
         category: joins
         answerable: true
+      # dataset_overview
+      - text: "What is this dataset about?"
+        category: dataset_overview
+        answerable: true
+      - text: "Give me a comprehensive overview of the dataset."
+        category: dataset_overview
+        answerable: true
+      - text: "What columns, data types, and metrics are present?"
+        category: dataset_overview
+        answerable: true
+      - text: "Summarize the main purpose and key characteristics of the uploaded data."
+        category: dataset_overview
+        answerable: true
+      - text: "What domain does this dataset belong to and what questions can I ask?"
+        category: dataset_overview
+        answerable: true
