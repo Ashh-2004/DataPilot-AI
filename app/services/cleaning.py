@@ -167,7 +167,8 @@ def clean_dataset(df: pd.DataFrame, source_name: str) -> CleaningResult:
 
     # --- Step 7: Metrics & Report ------------------------------------------
     nulls_after = {str(k): int(v) for k, v in cleaned_df.isnull().sum().to_dict().items()}
-    quality_score = _quality_score(cleaned_df)
+    raw_score, raw_issues = compute_quality_score_and_issues(df)
+    clean_score, clean_issues = compute_quality_score_and_issues(cleaned_df)
 
     report: dict[str, Any] = {
         "source_name": source_name,
@@ -181,7 +182,11 @@ def clean_dataset(df: pd.DataFrame, source_name: str) -> CleaningResult:
         "nulls_per_column_after": nulls_after,
         "columns_renamed": {k: v for k, v in col_mapping.items() if k != v},
         "operations": _describe_operations(databroom_success, warnings),
-        "quality_score": quality_score,
+        "raw_score": raw_score,
+        "clean_score": clean_score,
+        "quality_score": clean_score,  # backward compatibility
+        "issues": raw_issues if raw_issues else clean_issues,
+        "clean_issues": clean_issues,
     }
 
     return CleaningResult(
@@ -300,29 +305,187 @@ def sanitize_table_name(filename: str, existing_tables: list[str] | None = None)
     return name
 
 
-def _quality_score(df: pd.DataFrame) -> int:
-    """Compute a data quality score 0–100."""
+FINANCIAL_QTY_KEYWORDS = ("amount", "price", "qty", "quantity", "cost", "total", "sales", "revenue", "units", "balance")
+
+
+def compute_quality_score_and_issues(df: pd.DataFrame) -> tuple[int, list[dict[str, Any]]]:
+    """Compute documented data quality score (0-100) and list of detected issues.
+
+    Scoring weights (no free points for column naming):
+    - Completeness (non-null cell ratio): 25 pts
+    - Duplicate rate: 20 pts
+    - Invalid dates (strings that failed date parsing): 15 pts
+    - Numeric columns stored as text: 15 pts
+    - Empty and constant columns: 15 pts
+    - Negative values in amount/price/qty columns: 10 pts
+    """
     if df.empty:
-        return 0
-    total = 0.0
+        return 0, [{
+            "severity": "high",
+            "column": None,
+            "description": "Dataset is completely empty.",
+            "suggestion": "Upload a non-empty CSV/JSON/Excel/Parquet file.",
+        }]
 
-    # Completeness (40 pts)
-    completeness = df.notna().mean().mean()
-    total += completeness * 40
+    issues: list[dict[str, Any]] = []
+    total_rows = len(df)
+    total_cols = len(df.columns)
 
-    # Duplicate-free (20 pts)
-    dupe_frac = df.duplicated().mean()
-    total += (1 - dupe_frac) * 20
+    # 1. Completeness (25 pts)
+    non_null_ratio = float(df.notna().mean().mean()) if total_cols > 0 else 0.0
+    completeness_score = non_null_ratio * 25.0
 
-    # Type consistency (20 pts)
-    typed = sum(1 for dtype in df.dtypes if dtype != object) / max(len(df.columns), 1)
-    total += typed * 20
+    for col in df.columns:
+        col_null_pct = float(df[col].isnull().mean() * 100)
+        if col_null_pct > 10.0 and col_null_pct < 100.0:
+            severity = "high" if col_null_pct >= 50.0 else "medium"
+            issues.append({
+                "severity": severity,
+                "column": str(col),
+                "description": f"Column '{col}' has {col_null_pct:.1f}% missing values.",
+                "suggestion": "Impute missing values or remove sparse rows.",
+            })
 
-    # Valid snake_case naming (20 pts)
-    valid = sum(1 for c in df.columns if re.fullmatch(r"[a-z][a-z0-9_]*", str(c))) / max(len(df.columns), 1)
-    total += valid * 20
+    # 2. Duplicate Rate (20 pts)
+    dupe_count = int(df.duplicated().sum())
+    dupe_rate = (dupe_count / total_rows) if total_rows > 0 else 0.0
+    duplicate_score = (1.0 - dupe_rate) * 20.0
 
-    return min(100, max(0, int(round(total))))
+    if dupe_count > 0:
+        issues.append({
+            "severity": "medium",
+            "column": None,
+            "description": f"Found {dupe_count} duplicate row(s) ({dupe_rate:.1%} of dataset).",
+            "suggestion": "Deduplicate rows to prevent skewed aggregations.",
+        })
+
+    # 3. Invalid Dates (15 pts)
+    invalid_date_count = 0
+    total_date_candidates = 0
+    date_cols_evaluated: set[str] = set()
+
+    for col in df.columns:
+        col_lower = str(col).lower()
+        s = df[col].dropna()
+        if s.empty:
+            continue
+
+        is_date_col = any(k in col_lower for k in ("date", "time", "created", "updated", "joined", "timestamp"))
+        if not is_date_col and (s.dtype == object or pd.api.types.is_string_dtype(s)):
+            sample = s.head(20).astype(str)
+            try:
+                parsed_sample = pd.to_datetime(sample, errors="coerce", format="mixed")
+                if parsed_sample.notna().sum() >= max(1, len(sample) * 0.4):
+                    is_date_col = True
+            except Exception:
+                pass
+
+        if is_date_col and (s.dtype == object or pd.api.types.is_string_dtype(s)):
+            date_cols_evaluated.add(str(col))
+            str_vals = s.astype(str)
+            parsed = pd.to_datetime(str_vals, errors="coerce", format="mixed")
+            failed = int(parsed.isna().sum())
+            invalid_date_count += failed
+            total_date_candidates += len(str_vals)
+
+            if failed > 0:
+                issues.append({
+                    "severity": "high",
+                    "column": str(col),
+                    "description": f"Column '{col}' contains {failed} date value(s) that failed date parsing.",
+                    "suggestion": "Standardize date strings into ISO format (YYYY-MM-DD).",
+                })
+
+    invalid_date_frac = (invalid_date_count / total_date_candidates) if total_date_candidates > 0 else 0.0
+    invalid_date_score = (1.0 - invalid_date_frac) * 15.0
+
+    # 4. Numeric Columns Stored as Text (15 pts)
+    text_numeric_cols = 0
+    for col in df.columns:
+        if str(col) in date_cols_evaluated:
+            continue
+        s = df[col].dropna()
+        if s.empty:
+            continue
+        if s.dtype == object or pd.api.types.is_string_dtype(s):
+            str_vals = s.astype(str).str.strip().str.replace(r"[\$€£₹¥,\s]", "", regex=True)
+            num_parsed = pd.to_numeric(str_vals, errors="coerce")
+            if num_parsed.notna().sum() >= max(1, len(s) * 0.8):
+                text_numeric_cols += 1
+                issues.append({
+                    "severity": "medium",
+                    "column": str(col),
+                    "description": f"Column '{col}' contains numeric values stored as text/string.",
+                    "suggestion": "Cast column to numeric (int/float) data type.",
+                })
+
+    text_num_frac = (text_numeric_cols / total_cols) if total_cols > 0 else 0.0
+    numeric_text_score = (1.0 - text_num_frac) * 15.0
+
+    # 5. Empty and Constant Columns (15 pts)
+    empty_cols = 0
+    constant_cols = 0
+    for col in df.columns:
+        s = df[col].dropna()
+        if s.empty:
+            empty_cols += 1
+            issues.append({
+                "severity": "high",
+                "column": str(col),
+                "description": f"Column '{col}' is completely empty (100% missing values).",
+                "suggestion": "Drop empty column from dataset.",
+            })
+        elif s.nunique() <= 1:
+            constant_cols += 1
+            issues.append({
+                "severity": "low",
+                "column": str(col),
+                "description": f"Column '{col}' contains a single constant value.",
+                "suggestion": "Check if constant column can be dropped.",
+            })
+
+    empty_const_frac = ((empty_cols + constant_cols) / total_cols) if total_cols > 0 else 0.0
+    empty_constant_score = (1.0 - empty_const_frac) * 15.0
+
+    # 6. Negative Values in Financial/Quantity Columns (10 pts)
+    neg_cols = 0
+    for col in df.columns:
+        col_lower = str(col).lower()
+        if any(k in col_lower for k in FINANCIAL_QTY_KEYWORDS):
+            s = df[col].dropna()
+            if not s.empty:
+                if pd.api.types.is_numeric_dtype(s):
+                    num_s = s
+                else:
+                    str_vals = s.astype(str).str.strip().str.replace(r"[\$€£₹¥,\s]", "", regex=True)
+                    num_s = pd.to_numeric(str_vals, errors="coerce").dropna()
+
+                neg_count = int((num_s < 0).sum())
+                if neg_count > 0:
+                    neg_cols += 1
+                    issues.append({
+                        "severity": "high",
+                        "column": str(col),
+                        "description": f"Column '{col}' contains {neg_count} negative value(s).",
+                        "suggestion": "Verify whether negative values represent invalid records or returns.",
+                    })
+
+    neg_frac = (neg_cols / total_cols) if total_cols > 0 else 0.0
+    negative_score = (1.0 - neg_frac) * 10.0
+
+    final_score = int(round(
+        completeness_score + duplicate_score + invalid_date_score +
+        numeric_text_score + empty_constant_score + negative_score
+    ))
+    final_score = min(100, max(0, final_score))
+
+    return final_score, issues
+
+
+def _quality_score(df: pd.DataFrame) -> int:
+    """Legacy wrapper for quality score."""
+    score, _ = compute_quality_score_and_issues(df)
+    return score
 
 
 def _describe_operations(databroom_used: bool, warnings: list[str]) -> list[str]:
