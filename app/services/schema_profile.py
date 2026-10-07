@@ -23,9 +23,9 @@ def build_schema_profile(database_path: str, table_name: str) -> dict[str, Any]:
 
     Returns
     -------
-    dict with keys: table_name, row_count, columns (list of column profiles).
-    Each column profile has: name, type, null_pct, distinct_count,
-    min, max, sample_values.
+    dict with keys: table_name, row_count, columns (list of column profiles), correlations.
+    Each column profile has: name, type, null_pct, distinct_count, min, max,
+    mean, median, std, p25, p75, sample_values, top_5, is_candidate_id, is_constant.
     """
     with duckdb.connect(database_path, read_only=True) as conn:
         row_count = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
@@ -36,10 +36,13 @@ def build_schema_profile(database_path: str, table_name: str) -> dict[str, Any]:
             profile = _profile_column(conn, table_name, col_name, col_type, row_count)
             columns.append(profile)
 
+        correlations = _compute_numeric_correlations(conn, table_name, columns)
+
     return {
         "table_name": table_name,
         "row_count": row_count,
         "columns": columns,
+        "correlations": correlations,
     }
 
 
@@ -53,6 +56,8 @@ def profile_to_prompt_text(profile: dict[str, Any]) -> str:
         parts.append(f"distinct={col['distinct_count']}")
         if col.get("min") is not None:
             parts.append(f"range=[{col['min']}..{col['max']}]")
+        if col.get("mean") is not None:
+            parts.append(f"mean={col['mean']}")
         if col.get("sample_values"):
             samples = ", ".join(str(v) for v in col["sample_values"][:SAMPLE_VALUES_COUNT])
             parts.append(f"examples=[{samples}]")
@@ -99,12 +104,19 @@ def _profile_column(
         "distinct_count": 0,
         "min": None,
         "max": None,
+        "mean": None,
+        "median": None,
+        "std": None,
+        "p25": None,
+        "p75": None,
         "sample_values": [],
+        "top_5": [],
+        "is_candidate_id": False,
+        "is_constant": False,
     }
     if total_rows == 0:
         return profile
 
-    # Null % and distinct count
     quoted = f'"{col_name}"'
     stats = conn.execute(
         f"SELECT "
@@ -115,15 +127,40 @@ def _profile_column(
     profile["null_pct"] = float(stats[0] or 0)
     profile["distinct_count"] = int(stats[1] or 0)
 
-    # Min/max for numeric and date types
+    # Candidate ID and Constant flags
+    profile["is_constant"] = profile["distinct_count"] <= 1
+    if total_rows > 0:
+        profile["is_candidate_id"] = (profile["distinct_count"] / total_rows) >= 0.95
+
     upper_type = col_type.upper()
     is_numeric = any(t in upper_type for t in ("INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC", "BIGINT", "SMALLINT", "TINYINT", "HUGEINT"))
     is_date = any(t in upper_type for t in ("DATE", "TIMESTAMP", "TIME"))
 
-    if is_numeric or is_date:
+    if is_numeric:
+        try:
+            row = conn.execute(
+                f'SELECT '
+                f'  MIN({quoted}), MAX({quoted}), '
+                f'  AVG({quoted}), MEDIAN({quoted}), '
+                f'  COALESCE(STDDEV_SAMP({quoted}), 0), '
+                f'  QUANTILE_CONT({quoted}, 0.25), '
+                f'  QUANTILE_CONT({quoted}, 0.75) '
+                f'FROM "{table}" WHERE {quoted} IS NOT NULL'
+            ).fetchone()
+            if row and row[0] is not None:
+                profile["min"] = _safe_value(row[0])
+                profile["max"] = _safe_value(row[1])
+                profile["mean"] = round(float(row[2]), 4) if row[2] is not None else None
+                profile["median"] = _safe_value(row[3])
+                profile["std"] = round(float(row[4]), 4) if row[4] is not None else None
+                profile["p25"] = _safe_value(row[5])
+                profile["p75"] = _safe_value(row[6])
+        except Exception:
+            pass
+    elif is_date:
         try:
             minmax = conn.execute(
-                f"SELECT MIN({quoted}), MAX({quoted}) FROM \"{table}\" WHERE {quoted} IS NOT NULL"
+                f'SELECT MIN({quoted}), MAX({quoted}) FROM "{table}" WHERE {quoted} IS NOT NULL'
             ).fetchone()
             if minmax:
                 profile["min"] = _safe_value(minmax[0])
@@ -131,11 +168,21 @@ def _profile_column(
         except Exception:
             pass
 
-    # Sample / enumeration for low-cardinality text columns
+    # Top-5 values with counts for categorical / non-numeric columns
+    if not is_numeric:
+        try:
+            top_rows = conn.execute(
+                f'SELECT {quoted}, COUNT(*) FROM "{table}" WHERE {quoted} IS NOT NULL GROUP BY {quoted} ORDER BY COUNT(*) DESC, {quoted} ASC LIMIT 5'
+            ).fetchall()
+            profile["top_5"] = [{"value": _safe_value(r[0]), "count": int(r[1])} for r in top_rows]
+        except Exception:
+            pass
+
+    # Sample values
     if profile["distinct_count"] <= LOW_CARDINALITY_THRESHOLD and profile["distinct_count"] > 0:
         try:
             rows = conn.execute(
-                f"SELECT DISTINCT {quoted} FROM \"{table}\" WHERE {quoted} IS NOT NULL ORDER BY {quoted} LIMIT {LOW_CARDINALITY_THRESHOLD}"
+                f'SELECT DISTINCT {quoted} FROM "{table}" WHERE {quoted} IS NOT NULL ORDER BY {quoted} LIMIT {LOW_CARDINALITY_THRESHOLD}'
             ).fetchall()
             profile["sample_values"] = [_safe_value(r[0]) for r in rows]
         except Exception:
@@ -143,13 +190,51 @@ def _profile_column(
     elif profile["distinct_count"] > LOW_CARDINALITY_THRESHOLD:
         try:
             rows = conn.execute(
-                f"SELECT DISTINCT {quoted} FROM \"{table}\" WHERE {quoted} IS NOT NULL LIMIT {SAMPLE_VALUES_COUNT}"
+                f'SELECT DISTINCT {quoted} FROM "{table}" WHERE {quoted} IS NOT NULL LIMIT {SAMPLE_VALUES_COUNT}'
             ).fetchall()
             profile["sample_values"] = [_safe_value(r[0]) for r in rows]
         except Exception:
             pass
 
     return profile
+
+
+def _compute_numeric_correlations(
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str,
+    columns: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compute top-10 numeric correlations ordered by absolute correlation value."""
+    numeric_cols = [
+        c["name"] for c in columns
+        if any(t in c["type"].upper() for t in ("INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC", "BIGINT", "SMALLINT", "HUGEINT"))
+    ]
+    if len(numeric_cols) < 2:
+        return []
+
+    corrs: list[dict[str, Any]] = []
+    for i in range(len(numeric_cols)):
+        for j in range(i + 1, len(numeric_cols)):
+            col1, col2 = numeric_cols[i], numeric_cols[j]
+            try:
+                val = conn.execute(
+                    f'SELECT CORR("{col1}", "{col2}") FROM "{table_name}"'
+                ).fetchone()[0]
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    c_val = float(val)
+                    corrs.append({
+                        "col1": col1,
+                        "col2": col2,
+                        "correlation": round(c_val, 4),
+                        "abs_correlation": round(abs(c_val), 4),
+                    })
+            except Exception:
+                pass
+
+    corrs.sort(key=lambda x: x["abs_correlation"], reverse=True)
+    for item in corrs:
+        item.pop("abs_correlation", None)
+    return corrs[:10]
 
 
 def _safe_value(val: Any) -> Any:
