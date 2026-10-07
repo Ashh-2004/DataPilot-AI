@@ -12,7 +12,7 @@ import duckdb
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from langgraph.graph import END, START, StateGraph
 from neo4j.exceptions import Neo4jError
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -31,6 +31,7 @@ ERROR_COUNT = Counter("datapilot_errors_total", "Total pipeline errors")
 SQL_RETRY_COUNT = Counter("datapilot_sql_retries_total", "Total SQL self-correction retries")
 SQL_FAILURE_COUNT = Counter("datapilot_sql_failures_total", "Total SQL failures after all retries")
 STAGE_LATENCY = Histogram("datapilot_agent_latency_seconds", "Agent stage latency", ["stage"])
+REPORT_GEN_LATENCY = Histogram("datapilot_report_generation_latency_seconds", "Dataset report generation latency seconds")
 
 
 class QueryRequest(BaseModel):
@@ -139,6 +140,35 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
         "cleaning": app.state.datapilot.duckdb_tool.last_cleaning_report,
         "report": app.state.datapilot.duckdb_tool.last_dataset_report,
     }
+
+
+@app.get("/datasets")
+def list_datasets() -> list[dict[str, Any]]:
+    """Return all loaded user datasets with report summaries."""
+    return app.state.datapilot.duckdb_tool.get_all_dataset_summaries()
+
+
+@app.get("/datasets/{name}/report")
+def get_dataset_report(name: str, version: int | None = None) -> dict[str, Any]:
+    """Return JSON dataset report for a table."""
+    with REPORT_GEN_LATENCY.time():
+        report = app.state.datapilot.duckdb_tool.get_dataset_report(name, version=version)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"No report found for dataset '{name}'.")
+        return report
+
+
+@app.get("/datasets/{name}/report.html", response_class=HTMLResponse)
+def get_dataset_report_html(name: str, version: int | None = None) -> HTMLResponse:
+    """Return self-contained HTML report with inline CSS."""
+    from app.services.report_renderer import render_report_html
+
+    with REPORT_GEN_LATENCY.time():
+        report = app.state.datapilot.duckdb_tool.get_dataset_report(name, version=version)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"No report found for dataset '{name}'.")
+        html_content = render_report_html(report)
+        return HTMLResponse(content=html_content)
 
 
 @app.post("/reset")
