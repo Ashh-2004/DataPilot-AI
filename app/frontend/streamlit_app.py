@@ -81,38 +81,175 @@ def render_safe_table(df: pd.DataFrame) -> None:
         st.table(df.head(25))
 
 
+def render_plotly_chart(chart: Any) -> None:
+    """Render Plotly chart based on ChartSpec dictionary or dataclass."""
+    if isinstance(chart, dict):
+        chart_type = chart.get("chart_type")
+        title = chart.get("title", "")
+        x = chart.get("x")
+        y = chart.get("y")
+        color = chart.get("color")
+        data_records = chart.get("data", [])
+        df = pd.DataFrame(data_records) if data_records else pd.DataFrame()
+    else:
+        chart_type = getattr(chart, "chart_type", None)
+        title = getattr(chart, "title", "")
+        x = getattr(chart, "x", None)
+        y = getattr(chart, "y", None)
+        color = getattr(chart, "color", None)
+        data = getattr(chart, "data", None)
+        df = data if isinstance(data, pd.DataFrame) else pd.DataFrame()
+
+    if df.empty:
+        return
+
+    try:
+        if chart_type == "line":
+            fig = px.line(df, x=x, y=y, color=color, title=title)
+        elif chart_type == "bar":
+            fig = px.bar(df, x=x, y=y, color=color, title=title)
+        elif chart_type == "histogram":
+            fig = px.histogram(df, x=x, y=y, color=color, title=title)
+        elif chart_type == "scatter":
+            fig = px.scatter(df, x=x, y=y, color=color, title=title)
+        elif chart_type == "heatmap":
+            fig = px.imshow(df.set_index(x) if x in df.columns else df, title=title)
+        elif chart_type == "box":
+            fig = px.box(df, x=x, y=y, color=color, title=title)
+        elif chart_type == "pie":
+            fig = px.pie(df, names=x, values=y, title=title)
+        elif chart_type == "area":
+            fig = px.area(df, x=x, y=y, color=color, title=title)
+        else:
+            fig = px.bar(df, x=x, y=y, title=title)
+
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as exc:
+        st.caption(f"Chart render warning: {exc}")
+
+
+def render_auto_report(report: dict[str, Any]) -> None:
+    """Render auto-generated executive dataset report in Streamlit UI."""
+    title = report.get("title", "Auto-Analysis Report")
+    dataset_type = report.get("dataset_type", "generic")
+    key_entity = report.get("key_entity", "record")
+    gen_at = report.get("generated_at", "")
+
+    st.title(title)
+    st.caption(f"Dataset type: {dataset_type} | Entity: {key_entity} | Generated: {gen_at}")
+
+    # Key metrics tiles
+    metrics = report.get("key_metrics", {})
+    if metrics:
+        cols = st.columns(min(4, max(1, len(metrics))))
+        for i, (k, v) in enumerate(metrics.items()):
+            cols[i % len(cols)].metric(k, str(v))
+
+    # Executive Summary
+    exec_summary = report.get("executive_summary", "")
+    if exec_summary:
+        st.info(exec_summary)
+
+    # Sections
+    sections = report.get("sections", [])
+    for sec in sections:
+        if sec.get("skipped"):
+            continue
+        sec_title = sec.get("section_title", sec.get("title", "Analysis Section"))
+        with st.expander(sec_title, expanded=False):
+            st.write(sec.get("content", ""))
+            tbl_data = sec.get("table")
+            if tbl_data:
+                df_tbl = pd.DataFrame(tbl_data) if isinstance(tbl_data, list) else tbl_data
+                render_safe_table(df_tbl)
+            for chart in sec.get("charts", []):
+                render_plotly_chart(chart)
+            if sec.get("insight"):
+                st.caption(f"💡 {sec['insight']}")
+
+    # Recommendations
+    recs = report.get("recommendations", [])
+    if recs:
+        st.subheader("Recommendations")
+        for r in recs:
+            st.markdown(f"- {r}")
+
+    # Data Limitations
+    limitations = report.get("data_limitations", [])
+    if limitations:
+        st.warning("⚠️ Data Limitations\n" + "\n".join(f"• {l}" for l in limitations))
+
+
 # --- SIDEBAR: Dataset Upload & Health Inspector ---
 with st.sidebar:
     st.title("🤖 DataPilot AI")
     st.caption("Local Conversational Data Scientist & BI Assistant")
     st.markdown("---")
 
-    st.subheader("📁 Upload Dataset")
     uploaded = st.file_uploader(
         "Upload CSV, JSON, Excel, or Parquet",
         type=["csv", "json", "xlsx", "xls", "parquet"],
     )
+
+    if uploaded is not None:
+        try:
+            if uploaded.name.endswith(".csv"):
+                df_debug = pd.read_csv(uploaded)
+                st.write("Step 1: File loaded", df_debug.shape)
+                try:
+                    from app.analysis.dataset_profiler import DatasetProfiler
+                    from app.analysis.dataset_classifier import DatasetClassifier
+                    profiler = DatasetProfiler()
+                    profile_debug = profiler.profile(df_debug)
+                    st.write("Step 2: Profile done", list(profile_debug.keys()))
+                except Exception as e:
+                    st.error(f"Profiler failed: {e}")
+                    st.stop()
+                try:
+                    classifier = DatasetClassifier()
+                    classification_debug = classifier.classify(df_debug, profile_debug)
+                    st.write("Step 3: Classification done", classification_debug)
+                except Exception as e:
+                    st.error(f"Classifier failed: {e}")
+                    st.stop()
+                st.write("Step 4: Running full pipeline...")
+        except Exception:
+            pass
     if uploaded is not None and st.button("🚀 Load into Engine", use_container_width=True):
-        with st.spinner("Cleaning and profiling dataset..."):
+        with st.spinner("DataPilot is analyzing your data..."):
             try:
                 response = requests.post(
                     f"{API_URL}/upload",
                     files={"file": (uploaded.name, uploaded.getvalue())},
-                    timeout=60,
+                    timeout=120,
                 )
                 response.raise_for_status()
                 upload_data = response.json()
                 st.session_state.last_upload = upload_data
                 st.success(f"Successfully loaded {upload_data['rows']:,} rows into `{upload_data['table']}`.")
-            except requests.RequestException as exc:
-                st.error(f"Upload failed: {exc}")
+            except Exception as e:
+                st.error(f"Report generation failed: {e}")
+                st.stop()
 
     if st.session_state.last_upload and st.session_state.last_upload.get("cleaning"):
         cleaning = st.session_state.last_upload["cleaning"]
         st.markdown("---")
         st.subheader("📊 Dataset Health")
-        q_score = cleaning.get("clean_score", cleaning.get("quality_score", 100))
-        st.progress(q_score / 100, text=f"Clean Data Quality: {q_score}/100")
+        raw_q = cleaning.get("clean_score", cleaning.get("quality_score", 100))
+        if isinstance(raw_q, str):
+            cleaned_str = raw_q.split("/")[0].replace(",", "").strip()
+            try:
+                q_score = float(cleaned_str)
+            except ValueError:
+                q_score = 100.0
+        else:
+            try:
+                q_score = float(raw_q)
+            except (ValueError, TypeError):
+                q_score = 100.0
+
+        q_score = max(0.0, min(100.0, q_score))
+        st.progress(q_score / 100.0, text=f"Clean Data Quality: {q_score:.1f}/100")
 
         c1, c2 = st.columns(2)
         c1.metric("Clean Rows", f"{cleaning.get('rows_after', 0):,}")

@@ -3,6 +3,7 @@
 from datetime import date
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -71,7 +72,74 @@ class PlannerAgent:
         all_columns = self.duckdb_tool.get_all_column_names()
         today_str = date.today().isoformat()
 
-        prompt = (
+        # Load dataset_profile, dataset_classification, and data_sample from Redis / memory
+        profile = None
+        classification = None
+        sample = None
+
+        try:
+            import redis
+            redis_host = os.getenv("REDIS_HOST", "localhost")
+            redis_port = int(os.getenv("REDIS_PORT", 6379))
+            r = redis.Redis(host=redis_host, port=redis_port, db=0, socket_connect_timeout=2)
+            p_str = r.get("dataset_profile")
+            c_str = r.get("dataset_classification")
+            s_str = r.get("data_sample")
+
+            if p_str:
+                profile = json.loads(p_str)
+            if c_str:
+                classification = json.loads(c_str)
+            if s_str:
+                sample = json.loads(s_str)
+        except Exception as exc:
+            LOGGER.info("Redis lookup in Planner: %s", exc)
+
+        if not profile or not classification:
+            from app.analysis.pipeline import MEMORY_CACHE
+            profile = MEMORY_CACHE.get("dataset_profile")
+            classification = MEMORY_CACHE.get("dataset_classification")
+            sample = MEMORY_CACHE.get("data_sample")
+
+        if not profile or not classification:
+            return {
+                "question": rewritten_question,
+                "original_question": question,
+                "schema_context": schema,
+                "answer": "Please upload a dataset first before asking questions.",
+                "plan": {
+                    "intent": "missing_dataset",
+                    "tables": [user_tables[0]] if user_tables else [],
+                    "columns": [],
+                    "sql_hint": f'SELECT \'Please upload a dataset first before asking questions.\' AS message',
+                },
+            }
+
+        col_types = profile.get("column_types", profile.get("columns", {}))
+        if isinstance(col_types, dict) and any(isinstance(v, dict) for v in col_types.values()):
+            flat_types = {k: v.get("type", "unknown") if isinstance(v, dict) else str(v) for k, v in col_types.items()}
+        else:
+            flat_types = col_types
+
+        system_context = f"""
+You are a data analyst assistant. The user has uploaded a dataset.
+Dataset type: {classification.get('dataset_type', 'generic')}
+Each row represents: {classification.get('key_entity', 'record')}
+Columns: {list(flat_types.keys()) if isinstance(flat_types, dict) else list(profile.keys())}
+Column types: {flat_types}
+Sample rows: {sample}
+Key stats: {profile.get('numeric_stats', {})}
+Total rows: {profile.get('row_count', 0)}
+
+When answering questions:
+- Always reference actual column names from this dataset
+- Use real numbers from the stats above
+- Never write code unless the user explicitly asks for it
+- Answer as if you already know this dataset deeply
+"""
+
+        prompt_text = (
+            f"{system_context}\n\n"
             "You are a text-to-SQL planner and query generator for DuckDB.\n"
             f"Today's date is: {today_str}. Use this for resolving relative dates ('this month', 'last quarter', 'this year').\n\n"
             f"Available Database Tables and Schema:\n{schema}\n\n"
@@ -95,7 +163,7 @@ class PlannerAgent:
         )
 
         try:
-            response = self.llm.invoke(prompt)
+            response = self.llm.invoke(prompt_text)
             content = response.content if isinstance(response.content, str) else str(response.content)
             plan = self._extract_json(content)
         except Exception as exc:

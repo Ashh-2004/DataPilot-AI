@@ -499,3 +499,14 @@ def _describe_operations(databroom_used: bool, warnings: list[str]) -> list[str]
         "type_inference",
     ]
     return ops
+
+
+class DataCleaner:
+    """Class interface wrapper for dataset cleaning."""
+
+    @staticmethod
+    def clean(df: pd.DataFrame, source_name: str = "upload") -> pd.DataFrame:
+        """Clean raw DataFrame and return cleaned DataFrame."""
+        result = clean_dataset(df, source_name)
+        return result.cleaned_df
+

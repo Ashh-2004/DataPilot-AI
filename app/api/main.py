@@ -1,12 +1,15 @@
 """FastAPI entrypoint exposing uploads, queries, metrics, and pipeline wiring."""
 
 import json
+import logging
 import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 import duckdb
 import requests
@@ -128,17 +131,63 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
     with open(raw_disk_path, "wb") as f:
         f.write(file_bytes)
 
-    # Load and clean into DuckDB
+    # Load and clean via AutoAnalysisPipeline into DuckDB and generate Report
     try:
-        rows = app.state.datapilot.duckdb_tool.load_file(str(raw_disk_path), table_name)
+        import pandas as pd
+        from app.analysis.pipeline import AutoAnalysisPipeline
+
+        if suffix == ".csv":
+            df_raw = pd.read_csv(raw_disk_path)
+        elif suffix in [".xlsx", ".xls"]:
+            df_raw = pd.read_excel(raw_disk_path)
+        elif suffix == ".json":
+            df_raw = pd.read_json(raw_disk_path)
+        elif suffix == ".parquet":
+            df_raw = pd.read_parquet(raw_disk_path)
+        else:
+            df_raw = pd.read_csv(raw_disk_path)
+
+        pipeline = AutoAnalysisPipeline()
+        report = pipeline.run(df_raw, table_name=table_name)
+        report_dict = report.to_dict()
+        app.state.datapilot.duckdb_tool.last_dataset_report = report_dict
+
+        # Count clean rows loaded
+        with duckdb.connect(app.state.datapilot.duckdb_tool.database_path) as conn:
+            rows = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load file: {exc}") from exc
+        LOGGER.error("Upload & auto-analysis pipeline failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to process and analyze dataset: {exc}") from exc
+
+    raw_qs = report_dict.get("key_metrics", {}).get("Data Quality Score", 100)
+    if isinstance(raw_qs, str) and "/" in raw_qs:
+        try:
+            clean_qs = float(raw_qs.split("/")[0])
+        except ValueError:
+            clean_qs = 100.0
+    else:
+        try:
+            clean_qs = float(raw_qs)
+        except (ValueError, TypeError):
+            clean_qs = 100.0
+
+    dupes_str = report_dict.get("key_metrics", {}).get("Duplicate Rows", "0")
+    try:
+        dupes_cnt = int(str(dupes_str).replace(",", ""))
+    except ValueError:
+        dupes_cnt = 0
 
     return {
         "table": table_name,
         "rows": rows,
-        "cleaning": app.state.datapilot.duckdb_tool.last_cleaning_report,
-        "report": app.state.datapilot.duckdb_tool.last_dataset_report,
+        "cleaning": {
+            "clean_score": clean_qs,
+            "quality_score": clean_qs,
+            "rows_after": rows,
+            "duplicates_removed": dupes_cnt,
+        },
+        "report": report_dict,
     }
 
 
