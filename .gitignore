@@ -12,7 +12,10 @@ wheels/
 # Local environment configuration
 .env
 
-.xlsx
-.pdf
-.docx
-.pptx
+# Binary and Office files
+*.xlsx
+*.pdf
+*.docx
+*.pptx
+~$*
+
